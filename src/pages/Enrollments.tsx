@@ -45,6 +45,11 @@ function loadJSON<T>(key: string, fallback: T): T {
     return fallback;
   }
 }
+function saveJSON<T>(key: string, value: T) {
+  try {
+    localStorage.setItem(key, JSON.stringify(value));
+  } catch {}
+}
 
 /* ============================================================= */
 
@@ -64,7 +69,7 @@ export default function Enrollments() {
 
   // Keep enrollments persisted
   useEffect(() => {
-    localStorage.setItem(ENROLLMENTS_KEY, JSON.stringify(enrollments));
+    saveJSON(ENROLLMENTS_KEY, enrollments);
   }, [enrollments]);
 
   // If Students/Courses change in other pages + refresh here:
@@ -79,11 +84,6 @@ export default function Enrollments() {
     window.addEventListener("storage", onStorage);
     return () => window.removeEventListener("storage", onStorage);
   }, []);
-
-  // Dialog state
-  const [open, setOpen] = useState(false);
-  const [selectedStudentEmail, setSelectedStudentEmail] = useState("");
-  const [selectedCourseCode, setSelectedCourseCode] = useState("");
 
   // Toolbar (search & pagination)
   const [query, setQuery] = useState("");
@@ -102,17 +102,6 @@ export default function Enrollments() {
     for (const c of courses) m.set(c.code, c);
     return m;
   }, [courses]);
-
-  // Selected objects + guards
-  const selectedStudent = selectedStudentEmail ? studentsByEmail.get(selectedStudentEmail) : undefined;
-  const selectedCourse = selectedCourseCode ? coursesByCode.get(selectedCourseCode) : undefined;
-  const studentIsInactive = selectedStudent && selectedStudent.status === "Inactive";
-  const courseIsInactive = selectedCourse && selectedCourse.status === "Inactive";
-  const canEnroll =
-    !!selectedStudentEmail &&
-    !!selectedCourseCode &&
-    !studentIsInactive &&
-    !courseIsInactive;
 
   // Filter for search (name/email/course code/title)
   const filtered = useMemo(() => {
@@ -135,15 +124,26 @@ export default function Enrollments() {
     return filtered.slice(start, start + pageSize);
   }, [filtered, page, pageSize]);
 
-  // Enroll handler (enforce Active/Active)
+  // --------- Create Enrollment dialog ---------
+  const [open, setOpen] = useState(false);
+  const [selectedStudentEmail, setSelectedStudentEmail] = useState("");
+  const [selectedCourseCode, setSelectedCourseCode] = useState("");
+
+  const selectedStudent = selectedStudentEmail ? studentsByEmail.get(selectedStudentEmail) : undefined;
+  const selectedCourse = selectedCourseCode ? coursesByCode.get(selectedCourseCode) : undefined;
+  const studentIsInactive = selectedStudent && selectedStudent.status === "Inactive";
+  const courseIsInactive = selectedCourse && selectedCourse.status === "Inactive";
+  const canEnroll =
+    !!selectedStudentEmail &&
+    !!selectedCourseCode &&
+    !studentIsInactive &&
+    !courseIsInactive;
+
   function onEnroll() {
     if (!selectedStudentEmail || !selectedCourseCode) return;
-
     const s = studentsByEmail.get(selectedStudentEmail);
     const c = coursesByCode.get(selectedCourseCode);
-
     if (!s || !c) return;
-
     if (s.status !== "Active") {
       alert("Cannot enroll an INACTIVE student. Please activate the student first.");
       return;
@@ -152,8 +152,6 @@ export default function Enrollments() {
       alert("Cannot enroll into an INACTIVE course. Please activate the course first.");
       return;
     }
-
-    // prevent duplicates
     const exists = enrollments.some(
       (e) => e.studentEmail === selectedStudentEmail && e.courseCode === selectedCourseCode
     );
@@ -161,7 +159,6 @@ export default function Enrollments() {
       alert("This student is already enrolled in that course.");
       return;
     }
-
     const next: Enrollment = {
       studentEmail: selectedStudentEmail,
       courseCode: selectedCourseCode,
@@ -169,17 +166,72 @@ export default function Enrollments() {
     };
     const updated = [...enrollments, next];
     setEnrollments(updated);
-
-    // Jump to the last page to show new enrollment
     const total = Math.max(1, Math.ceil(updated.length / pageSize));
     setPageIndex(total - 1);
-
-    // reset form
     setSelectedStudentEmail("");
     setSelectedCourseCode("");
     setOpen(false);
   }
 
+  // --------- Edit Enrollment dialog ---------
+  const [openEdit, setOpenEdit] = useState(false);
+  const [editing, setEditing] = useState<Enrollment | null>(null);
+  const [editStudentEmail, setEditStudentEmail] = useState("");
+  const [editCourseCode, setEditCourseCode] = useState("");
+
+  const editStudent = editStudentEmail ? studentsByEmail.get(editStudentEmail) : undefined;
+  const editCourse = editCourseCode ? coursesByCode.get(editCourseCode) : undefined;
+  const editStudentInactive = editStudent && editStudent.status === "Inactive";
+  const editCourseInactive = editCourse && editCourse.status === "Inactive";
+  const canSaveEdit =
+    !!editStudentEmail &&
+    !!editCourseCode &&
+    !editStudentInactive &&
+    !editCourseInactive;
+
+  function openEditFor(en: Enrollment) {
+    setEditing(en);
+    setEditStudentEmail(en.studentEmail);
+    setEditCourseCode(en.courseCode);
+    setOpenEdit(true);
+  }
+
+  function onSaveEdit() {
+    if (!editing) return;
+    const s = studentsByEmail.get(editStudentEmail);
+    const c = coursesByCode.get(editCourseCode);
+    if (!s || !c) return;
+    if (s.status !== "Active") {
+      alert("Cannot set enrollment to an INACTIVE student. Activate them first.");
+      return;
+    }
+    if (c.status !== "Active") {
+      alert("Cannot set enrollment into an INACTIVE course. Activate it first.");
+      return;
+    }
+    // prevent duplicates (excluding the current row)
+    const duplicate = enrollments.some(
+      (e) =>
+        e !== editing &&
+        e.studentEmail === editStudentEmail &&
+        e.courseCode === editCourseCode
+    );
+    if (duplicate) {
+      alert("Another identical enrollment already exists.");
+      return;
+    }
+
+    const updated = enrollments.map((e) =>
+      e === editing
+        ? { ...e, studentEmail: editStudentEmail, courseCode: editCourseCode }
+        : e
+    );
+    setEnrollments(updated);
+    setOpenEdit(false);
+    setEditing(null);
+  }
+
+  // --------- Delete / Reset ----------
   function onDelete(en: Enrollment) {
     if (!confirm("Remove this enrollment?")) return;
     setEnrollments((prev) =>
@@ -331,9 +383,14 @@ export default function Enrollments() {
                     </div>
                   </td>
                   <td className="px-4 py-2">
-                    <Button variant="destructive" onClick={() => onDelete(en)}>
-                      Remove
-                    </Button>
+                    <div className="flex gap-2">
+                      <Button variant="outline" onClick={() => openEditFor(en)}>
+                        Edit
+                      </Button>
+                      <Button variant="destructive" onClick={() => onDelete(en)}>
+                        Remove
+                      </Button>
+                    </div>
                   </td>
                 </tr>
               );
@@ -398,6 +455,78 @@ export default function Enrollments() {
           </div>
         </div>
       </div>
+
+      {/* Edit dialog */}
+      <Dialog open={openEdit} onOpenChange={setOpenEdit}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Edit Enrollment</DialogTitle>
+          </DialogHeader>
+
+          {/* Student select */}
+          <div className="space-y-2 mt-2">
+            <Label htmlFor="student_e">Student</Label>
+            <select
+              id="student_e"
+              value={editStudentEmail}
+              onChange={(e) => setEditStudentEmail(e.target.value)}
+              className="w-full border rounded-md p-2 bg-background"
+            >
+              <option value="">Select a student…</option>
+              {students.map((s) => (
+                <option
+                  key={s.email}
+                  value={s.email}
+                  disabled={s.status === "Inactive"} // guard: disable inactive
+                >
+                  {s.name} — {s.email} {s.status === "Inactive" ? "(inactive)" : ""}
+                </option>
+              ))}
+            </select>
+            {editStudentInactive && (
+              <p className="text-amber-600 dark:text-amber-400 text-xs">
+                This student is inactive. Activate them before saving.
+              </p>
+            )}
+          </div>
+
+          {/* Course select */}
+          <div className="space-y-2">
+            <Label htmlFor="course_e">Course</Label>
+            <select
+              id="course_e"
+              value={editCourseCode}
+              onChange={(e) => setEditCourseCode(e.target.value)}
+              className="w-full border rounded-md p-2 bg-background"
+            >
+              <option value="">Select a course…</option>
+              {courses.map((c) => (
+                <option
+                  key={c.code}
+                  value={c.code}
+                  disabled={c.status === "Inactive"} // guard: disable inactive
+                >
+                  {c.code} — {c.title} {c.status === "Inactive" ? "(inactive)" : ""}
+                </option>
+              ))}
+            </select>
+            {editCourseInactive && (
+              <p className="text-amber-600 dark:text-amber-400 text-xs">
+                This course is inactive. Activate it before saving.
+              </p>
+            )}
+          </div>
+
+          <div className="flex gap-2 mt-2">
+            <Button className="flex-1" onClick={onSaveEdit} disabled={!canSaveEdit}>
+              Save
+            </Button>
+            <Button variant="outline" className="flex-1" onClick={() => setOpenEdit(false)}>
+              Cancel
+            </Button>
+          </div>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }
