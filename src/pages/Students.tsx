@@ -17,7 +17,7 @@ import { zodResolver } from "@hookform/resolvers/zod";
 const studentSchema = z.object({
   name: z.string().min(2, "Name is required"),
   email: z.string().email("Invalid email"),
-  course: z.string().min(1, "Course is required"), // stores course CODE from Courses page
+  course: z.string().optional().default(""), // stores course CODE from Courses page
   status: z.enum(["Active", "Inactive"]),
 });
 type Student = z.infer<typeof studentSchema>;
@@ -55,13 +55,10 @@ function loadJSON<T>(key: string, fallback: T): T {
     return fallback;
   }
 }
-
 function saveJSON<T>(key: string, value: T) {
   try {
     localStorage.setItem(key, JSON.stringify(value));
-  } catch {
-    // ignore
-  }
+  } catch {}
 }
 
 /* ======================================================== */
@@ -83,12 +80,10 @@ export default function Students() {
   // persist students
   useEffect(() => saveJSON(STUDENTS_KEY, students), [students]);
 
-  // keep courses fresh if changed in Courses page (on another tab)
+  // keep courses fresh if changed elsewhere
   useEffect(() => {
     const onStorage = (e: StorageEvent) => {
-      if (e.key === COURSES_KEY) {
-        setCourses(loadJSON(COURSES_KEY, []));
-      }
+      if (e.key === COURSES_KEY) setCourses(loadJSON(COURSES_KEY, []));
     };
     window.addEventListener("storage", onStorage);
     return () => window.removeEventListener("storage", onStorage);
@@ -138,6 +133,18 @@ export default function Students() {
     }
   }
 
+  /* ---------- derived ---------- */
+  const courseMap = useMemo(() => {
+    const m = new Map<string, Course>();
+    for (const c of courses) m.set(c.code, c);
+    return m;
+  }, [courses]);
+  function courseLabel(code: string) {
+    if (!code) return "-";
+    const c = courseMap.get(code);
+    return c ? `${c.code} — ${c.title}` : code;
+  }
+
   /* ---------- Add Student dialog ---------- */
   const [openAdd, setOpenAdd] = useState(false);
   const addForm = useForm<Student>({
@@ -146,16 +153,28 @@ export default function Students() {
   });
 
   function onAdd(values: Student) {
-    // enforce unique email
+    // unique email
     if (students.some((s) => s.email.toLowerCase() === values.email.toLowerCase())) {
       alert("A student with this email already exists.");
       return;
     }
+    // integrity: chosen course must be Active (or empty)
+    if (values.course) {
+      const c = courseMap.get(values.course);
+      if (!c) {
+        alert("Selected course no longer exists.");
+        return;
+      }
+      if (c.status !== "Active") {
+        alert("Cannot assign an INACTIVE course. Please choose an active course.");
+        return;
+      }
+    }
+
     const next = [...students, values];
     setStudents(next);
     setOpenAdd(false);
     addForm.reset();
-    // show last page
     const total = Math.max(1, Math.ceil(next.length / pageSize));
     setPageIndex(total - 1);
   }
@@ -177,29 +196,49 @@ export default function Students() {
   function onEditSubmit(values: Student) {
     if (!editingEmail) return;
 
-    const emailChanged =
-      editingEmail.toLowerCase() !== values.email.toLowerCase();
+    const emailChanged = editingEmail.toLowerCase() !== values.email.toLowerCase();
 
-    // if email changed, ensure uniqueness
+    // uniqueness
     if (
       emailChanged &&
-      students.some(
-        (s) => s.email.toLowerCase() === values.email.toLowerCase()
-      )
+      students.some((x) => x.email.toLowerCase() === values.email.toLowerCase())
     ) {
       alert("A student with this email already exists.");
       return;
     }
 
-    // update students list
-    const updated = students.map((s) =>
-      s.email === editingEmail ? values : s
+    // integrity: course selected must be Active (or empty)
+    if (values.course) {
+      const c = courseMap.get(values.course);
+      if (!c) {
+        alert("Selected course no longer exists.");
+        return;
+      }
+      if (c.status !== "Active") {
+        alert("Cannot assign an INACTIVE course. Please choose an active course.");
+        return;
+      }
+    }
+
+    // integrity: switching student to Inactive while they have enrollments → confirm
+    const enrollments = loadJSON<Enrollment[]>(ENROLLMENTS_KEY, []);
+    const hadEnrollments = enrollments.some(
+      (e) => e.studentEmail.toLowerCase() === editingEmail.toLowerCase()
     );
+    const turningInactive = values.status === "Inactive";
+    if (turningInactive && hadEnrollments) {
+      const ok = confirm(
+        "This student has enrollments. Marking them Inactive will prevent new enrollments but will NOT delete existing ones. Continue?"
+      );
+      if (!ok) return;
+    }
+
+    // update students
+    const updated = students.map((s) => (s.email === editingEmail ? values : s));
     setStudents(updated);
 
-    // also update enrollments if email changed
+    // propagate email change in enrollments
     if (emailChanged) {
-      const enrollments = loadJSON<Enrollment[]>(ENROLLMENTS_KEY, []);
       const updatedEnrollments = enrollments.map((e) =>
         e.studentEmail.toLowerCase() === editingEmail.toLowerCase()
           ? { ...e, studentEmail: values.email }
@@ -216,28 +255,14 @@ export default function Students() {
   function onDelete(s: Student) {
     if (!confirm(`Delete ${s.name}? This also removes their enrollments.`)) return;
 
-    // remove student
     const next = students.filter((x) => x.email !== s.email);
     setStudents(next);
 
-    // remove related enrollments
     const enrollments = loadJSON<Enrollment[]>(ENROLLMENTS_KEY, []);
     const remaining = enrollments.filter(
       (e) => e.studentEmail.toLowerCase() !== s.email.toLowerCase()
     );
     saveJSON(ENROLLMENTS_KEY, remaining);
-  }
-
-  /* ---------- helpers ---------- */
-  const courseMap = useMemo(() => {
-    const m = new Map<string, Course>();
-    for (const c of courses) m.set(c.code, c);
-    return m;
-  }, [courses]);
-
-  function courseLabel(code: string) {
-    const c = courseMap.get(code);
-    return c ? `${c.code} — ${c.title}` : code || "-";
   }
 
   return (
@@ -283,9 +308,9 @@ export default function Students() {
                     {...addForm.register("course")}
                     className="w-full border rounded-md p-2 bg-background"
                   >
-                    <option value="">Select a course…</option>
+                    <option value="">No course</option>
                     {courses.map((c) => (
-                      <option key={c.code} value={c.code}>
+                      <option key={c.code} value={c.code} disabled={c.status === "Inactive"}>
                         {c.code} — {c.title} {c.status === "Inactive" ? "(inactive)" : ""}
                       </option>
                     ))}
@@ -330,7 +355,7 @@ export default function Students() {
               <tr key={s.email} className="border-t">
                 <td className="px-4 py-2 font-medium">{s.name}</td>
                 <td className="px-4 py-2">{s.email}</td>
-                <td className="px-4 py-2">{courseLabel(s.course)}</td>
+                <td className="px-4 py-2">{courseLabel(s.course ?? "")}</td>
                 <td className="px-4 py-2">
                   <span
                     className={
@@ -441,9 +466,9 @@ export default function Students() {
                 {...editForm.register("course")}
                 className="w-full border rounded-md p-2 bg-background"
               >
-                <option value="">Select a course…</option>
+                <option value="">No course</option>
                 {courses.map((c) => (
-                  <option key={c.code} value={c.code}>
+                  <option key={c.code} value={c.code} disabled={c.status === "Inactive"}>
                     {c.code} — {c.title} {c.status === "Inactive" ? "(inactive)" : ""}
                   </option>
                 ))}
@@ -482,7 +507,6 @@ function ErrorText({ message }: { message?: string }) {
   if (!message) return null;
   return <p className="text-red-500 text-xs mt-1">{message}</p>;
 }
-
 function Th({
   onClick,
   label,

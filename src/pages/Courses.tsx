@@ -22,34 +22,56 @@ const courseSchema = z.object({
 });
 type Course = z.infer<typeof courseSchema>;
 
-/* ---------------------- Seed Data ----------------------- */
+type Student = {
+  name: string;
+  email: string;
+  course: string;
+  status: "Active" | "Inactive";
+};
+type Enrollment = {
+  studentEmail: string;
+  courseCode: string;
+  createdAt: string;
+};
+
+/* ---------------------- Storage keys -------------------- */
+const COURSES_KEY = "sms.courses.v1";
+const STUDENTS_KEY = "sms.students.v1";
+const ENROLLMENTS_KEY = "sms.enrollments.v1";
+
+/* ---------------------- Seed ---------------------------- */
 const SEED: Course[] = [
   { code: "MATH101", title: "Basic Math", credits: 3, status: "Active" },
   { code: "SCI201", title: "Science Fundamentals", credits: 4, status: "Inactive" },
   { code: "HIST150", title: "World History", credits: 3, status: "Active" },
 ];
 
-const STORAGE_KEY = "sms.courses.v1";
+/* ---------------------- Helpers ------------------------- */
+function loadJSON<T>(key: string, fallback: T): T {
+  try {
+    const raw = localStorage.getItem(key);
+    return raw ? (JSON.parse(raw) as T) : fallback;
+  } catch {
+    return fallback;
+  }
+}
+function saveJSON<T>(key: string, value: T) {
+  try {
+    localStorage.setItem(key, JSON.stringify(value));
+  } catch {}
+}
 
-/* ---------------------- Component ----------------------- */
+/* ======================================================== */
+
 export default function Courses() {
-  const [data, setData] = useState<Course[]>(() => {
-    try {
-      const raw = localStorage.getItem(STORAGE_KEY);
-      return raw ? (JSON.parse(raw) as Course[]) : SEED;
-    } catch {
-      return SEED;
-    }
-  });
+  const [data, setData] = useState<Course[]>(() => loadJSON<Course[]>(COURSES_KEY, SEED));
   const [query, setQuery] = useState("");
   const [sortKey, setSortKey] = useState<keyof Course>("code");
   const [sortDir, setSortDir] = useState<"asc" | "desc" | null>(null);
   const [pageIndex, setPageIndex] = useState(0);
   const [pageSize, setPageSize] = useState(5);
 
-  useEffect(() => {
-    localStorage.setItem(STORAGE_KEY, JSON.stringify(data));
-  }, [data]);
+  useEffect(() => saveJSON(COURSES_KEY, data), [data]);
 
   const filtered = useMemo(() => {
     const q = query.trim().toLowerCase();
@@ -85,24 +107,120 @@ export default function Courses() {
     }
   }
 
-  /* ----- Add Course dialog + form ----- */
-  const [open, setOpen] = useState(false);
-  const form = useForm<Course>({
+  /* ----- Add Course ----- */
+  const [openAdd, setOpenAdd] = useState(false);
+  const addForm = useForm<Course>({
     resolver: zodResolver(courseSchema),
     defaultValues: { code: "", title: "", credits: 3, status: "Active" },
   });
 
-  const onSubmit = (values: Course) => {
-    setData((prev) => [...prev, values]);
-    setOpen(false);
-    form.reset();
-    const total = Math.max(1, Math.ceil((data.length + 1) / pageSize));
+  function onAdd(values: Course) {
+    // unique code
+    if (data.some((c) => c.code.toLowerCase() === values.code.toLowerCase())) {
+      alert("A course with this code already exists.");
+      return;
+    }
+    const next = [...data, values];
+    setData(next);
+    setOpenAdd(false);
+    addForm.reset();
+    const total = Math.max(1, Math.ceil(next.length / pageSize));
     setPageIndex(total - 1);
-  };
+  }
 
-  function resetToSeed() {
-    setData(SEED);
-    setPageIndex(0);
+  /* ----- Edit Course ----- */
+  const [openEdit, setOpenEdit] = useState(false);
+  const [editingCode, setEditingCode] = useState<string | null>(null);
+  const editForm = useForm<Course>({
+    resolver: zodResolver(courseSchema),
+    defaultValues: { code: "", title: "", credits: 3, status: "Active" },
+  });
+
+  function openEditFor(c: Course) {
+    setEditingCode(c.code);
+    editForm.reset(c);
+    setOpenEdit(true);
+  }
+
+  function onEditSubmit(values: Course) {
+    if (!editingCode) return;
+
+    // unique code (if changed)
+    const codeChanged = editingCode.toLowerCase() !== values.code.toLowerCase();
+    if (
+      codeChanged &&
+      data.some((x) => x.code.toLowerCase() === values.code.toLowerCase())
+    ) {
+      alert("A course with this code already exists.");
+      return;
+    }
+
+    // if setting to Inactive and has enrollments → confirm
+    const enrollments = loadJSON<Enrollment[]>(ENROLLMENTS_KEY, []);
+    const hasEnrollments = enrollments.some(
+      (e) => e.courseCode.toLowerCase() === editingCode.toLowerCase()
+    );
+    const turningInactive = values.status === "Inactive";
+    if (turningInactive && hasEnrollments) {
+      const ok = confirm(
+        "This course has enrollments. Marking it Inactive will prevent new enrollments but will NOT delete existing ones. Continue?"
+      );
+      if (!ok) return;
+    }
+
+    // update course list
+    const updatedCourses = data.map((c) => (c.code === editingCode ? values : c));
+    setData(updatedCourses);
+
+    // propagate code change to Students and Enrollments
+    if (codeChanged) {
+      const students = loadJSON<Student[]>(STUDENTS_KEY, []);
+      const studentsUpdated = students.map((s) =>
+        (s.course ?? "").toLowerCase() === editingCode.toLowerCase()
+          ? { ...s, course: values.code }
+          : s
+      );
+      saveJSON(STUDENTS_KEY, studentsUpdated);
+
+      const updatedEnrollments = enrollments.map((e) =>
+        e.courseCode.toLowerCase() === editingCode.toLowerCase()
+          ? { ...e, courseCode: values.code }
+          : e
+      );
+      saveJSON(ENROLLMENTS_KEY, updatedEnrollments);
+    }
+
+    setOpenEdit(false);
+    setEditingCode(null);
+  }
+
+  /* ----- Delete Course ----- */
+  function onDelete(c: Course) {
+    const enrollments = loadJSON<Enrollment[]>(ENROLLMENTS_KEY, []);
+    const hasEnrollments = enrollments.some(
+      (e) => e.courseCode.toLowerCase() === c.code.toLowerCase()
+    );
+    const extra = hasEnrollments
+      ? "\n\nThis will also remove related enrollments and clear the course on affected students."
+      : "";
+    if (!confirm(`Delete ${c.code} — ${c.title}?${extra}`)) return;
+
+    // remove course
+    const remainingCourses = data.filter((x) => x.code !== c.code);
+    setData(remainingCourses);
+
+    // remove related enrollments
+    const remainingEnrollments = enrollments.filter(
+      (e) => e.courseCode.toLowerCase() !== c.code.toLowerCase()
+    );
+    saveJSON(ENROLLMENTS_KEY, remainingEnrollments);
+
+    // clear students' course if it matched this code
+    const students = loadJSON<Student[]>(STUDENTS_KEY, []);
+    const clearedStudents = students.map((s) =>
+      (s.course ?? "").toLowerCase() === c.code.toLowerCase() ? { ...s, course: "" } : s
+    );
+    saveJSON(STUDENTS_KEY, clearedStudents);
   }
 
   return (
@@ -120,8 +238,7 @@ export default function Courses() {
         />
 
         <div className="flex gap-2">
-          <Button variant="outline" onClick={resetToSeed}>Reset data</Button>
-          <Dialog open={open} onOpenChange={setOpen}>
+          <Dialog open={openAdd} onOpenChange={setOpenAdd}>
             <DialogTrigger asChild>
               <Button>Add Course</Button>
             </DialogTrigger>
@@ -129,33 +246,33 @@ export default function Courses() {
               <DialogHeader>
                 <DialogTitle>Add Course</DialogTitle>
               </DialogHeader>
-              <form onSubmit={form.handleSubmit(onSubmit)} className="space-y-4 mt-2">
+              <form onSubmit={addForm.handleSubmit(onAdd)} className="space-y-4 mt-2">
                 <div>
                   <Label htmlFor="code">Code</Label>
-                  <Input id="code" {...form.register("code")} />
-                  <ErrorText message={form.formState.errors.code?.message} />
+                  <Input id="code" {...addForm.register("code")} />
+                  <ErrorText message={addForm.formState.errors.code?.message} />
                 </div>
                 <div>
                   <Label htmlFor="title">Title</Label>
-                  <Input id="title" {...form.register("title")} />
-                  <ErrorText message={form.formState.errors.title?.message} />
+                  <Input id="title" {...addForm.register("title")} />
+                  <ErrorText message={addForm.formState.errors.title?.message} />
                 </div>
                 <div>
                   <Label htmlFor="credits">Credits</Label>
-                  <Input id="credits" type="number" {...form.register("credits")} />
-                  <ErrorText message={form.formState.errors.credits?.message} />
+                  <Input id="credits" type="number" {...addForm.register("credits")} />
+                  <ErrorText message={addForm.formState.errors.credits?.message} />
                 </div>
                 <div>
                   <Label htmlFor="status">Status</Label>
                   <select
                     id="status"
-                    {...form.register("status")}
+                    {...addForm.register("status")}
                     className="w-full border rounded-md p-2 bg-background"
                   >
                     <option value="Active">Active</option>
                     <option value="Inactive">Inactive</option>
                   </select>
-                  <ErrorText message={form.formState.errors.status?.message} />
+                  <ErrorText message={addForm.formState.errors.status?.message} />
                 </div>
                 <Button type="submit" className="w-full">Save</Button>
               </form>
@@ -173,11 +290,12 @@ export default function Courses() {
               <Th onClick={() => toggleSort("title")} label="Title" active={sortKey === "title"} dir={sortDir} />
               <Th onClick={() => toggleSort("credits")} label="Credits" active={sortKey === "credits"} dir={sortDir} />
               <Th onClick={() => toggleSort("status")} label="Status" active={sortKey === "status"} dir={sortDir} />
+              <th className="px-4 py-2 text-left font-semibold">Actions</th>
             </tr>
           </thead>
           <tbody>
-            {paged.map((c, i) => (
-              <tr key={`${c.code}-${i}`} className="border-t">
+            {paged.map((c) => (
+              <tr key={c.code} className="border-t">
                 <td className="px-4 py-2 font-medium">{c.code}</td>
                 <td className="px-4 py-2">{c.title}</td>
                 <td className="px-4 py-2">{c.credits}</td>
@@ -193,12 +311,18 @@ export default function Courses() {
                     {c.status}
                   </span>
                 </td>
+                <td className="px-4 py-2">
+                  <div className="flex gap-2">
+                    <Button variant="outline" onClick={() => openEditFor(c)}>Edit</Button>
+                    <Button variant="destructive" onClick={() => onDelete(c)}>Delete</Button>
+                  </div>
+                </td>
               </tr>
             ))}
 
             {paged.length === 0 && (
               <tr>
-                <td colSpan={4} className="px-4 py-10 text-center text-muted-foreground">
+                <td colSpan={5} className="px-4 py-10 text-center text-muted-foreground">
                   No courses found.
                 </td>
               </tr>
@@ -237,6 +361,51 @@ export default function Courses() {
           </div>
         </div>
       </div>
+
+      {/* Edit dialog */}
+      <Dialog open={openEdit} onOpenChange={setOpenEdit}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Edit Course</DialogTitle>
+          </DialogHeader>
+          <form onSubmit={editForm.handleSubmit(onEditSubmit)} className="space-y-4 mt-2">
+            <div>
+              <Label htmlFor="code_e">Code</Label>
+              <Input id="code_e" {...editForm.register("code")} />
+              <ErrorText message={editForm.formState.errors.code?.message} />
+            </div>
+            <div>
+              <Label htmlFor="title_e">Title</Label>
+              <Input id="title_e" {...editForm.register("title")} />
+              <ErrorText message={editForm.formState.errors.title?.message} />
+            </div>
+            <div>
+              <Label htmlFor="credits_e">Credits</Label>
+              <Input id="credits_e" type="number" {...editForm.register("credits")} />
+              <ErrorText message={editForm.formState.errors.credits?.message} />
+            </div>
+            <div>
+              <Label htmlFor="status_e">Status</Label>
+              <select
+                id="status_e"
+                {...editForm.register("status")}
+                className="w-full border rounded-md p-2 bg-background"
+              >
+                <option value="Active">Active</option>
+                <option value="Inactive">Inactive</option>
+              </select>
+              <ErrorText message={editForm.formState.errors.status?.message} />
+            </div>
+
+            <div className="flex gap-2">
+              <Button type="submit" className="flex-1">Save</Button>
+              <Button type="button" variant="outline" className="flex-1" onClick={() => setOpenEdit(false)}>
+                Cancel
+              </Button>
+            </div>
+          </form>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }
@@ -246,7 +415,6 @@ function ErrorText({ message }: { message?: string }) {
   if (!message) return null;
   return <p className="text-red-500 text-xs mt-1">{message}</p>;
 }
-
 function Th({
   onClick,
   label,
