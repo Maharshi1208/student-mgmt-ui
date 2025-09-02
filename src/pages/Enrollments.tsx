@@ -19,7 +19,7 @@ const ENROLLMENTS_KEY = "sms.enrollments.v1";
 type Student = {
   name: string;
   email: string;
-  course: string;         // from Students page; not used here as source of truth
+  course: string; // not used as source of truth here
   status: "Active" | "Inactive";
 };
 
@@ -33,7 +33,6 @@ type Course = {
 type Enrollment = {
   studentEmail: string;
   courseCode: string;
-  // optional: timestamp for when created
   createdAt: string;
 };
 
@@ -68,7 +67,7 @@ export default function Enrollments() {
     localStorage.setItem(ENROLLMENTS_KEY, JSON.stringify(enrollments));
   }, [enrollments]);
 
-  // If someone edits Students/Courses in other pages and refreshes here:
+  // If Students/Courses change in other pages + refresh here:
   useEffect(() => {
     const onStorage = (e: StorageEvent) => {
       if (e.key === STUDENTS_KEY) {
@@ -81,7 +80,7 @@ export default function Enrollments() {
     return () => window.removeEventListener("storage", onStorage);
   }, []);
 
-  // Form state for the dialog
+  // Dialog state
   const [open, setOpen] = useState(false);
   const [selectedStudentEmail, setSelectedStudentEmail] = useState("");
   const [selectedCourseCode, setSelectedCourseCode] = useState("");
@@ -91,7 +90,7 @@ export default function Enrollments() {
   const [pageIndex, setPageIndex] = useState(0);
   const [pageSize, setPageSize] = useState(5);
 
-  // Derived nice maps for quick lookup
+  // Lookups
   const studentsByEmail = useMemo(() => {
     const m = new Map<string, Student>();
     for (const s of students) m.set(s.email, s);
@@ -103,6 +102,17 @@ export default function Enrollments() {
     for (const c of courses) m.set(c.code, c);
     return m;
   }, [courses]);
+
+  // Selected objects + guards
+  const selectedStudent = selectedStudentEmail ? studentsByEmail.get(selectedStudentEmail) : undefined;
+  const selectedCourse = selectedCourseCode ? coursesByCode.get(selectedCourseCode) : undefined;
+  const studentIsInactive = selectedStudent && selectedStudent.status === "Inactive";
+  const courseIsInactive = selectedCourse && selectedCourse.status === "Inactive";
+  const canEnroll =
+    !!selectedStudentEmail &&
+    !!selectedCourseCode &&
+    !studentIsInactive &&
+    !courseIsInactive;
 
   // Filter for search (name/email/course code/title)
   const filtered = useMemo(() => {
@@ -125,9 +135,23 @@ export default function Enrollments() {
     return filtered.slice(start, start + pageSize);
   }, [filtered, page, pageSize]);
 
-  // Enroll handler
+  // Enroll handler (enforce Active/Active)
   function onEnroll() {
     if (!selectedStudentEmail || !selectedCourseCode) return;
+
+    const s = studentsByEmail.get(selectedStudentEmail);
+    const c = coursesByCode.get(selectedCourseCode);
+
+    if (!s || !c) return;
+
+    if (s.status !== "Active") {
+      alert("Cannot enroll an INACTIVE student. Please activate the student first.");
+      return;
+    }
+    if (c.status !== "Active") {
+      alert("Cannot enroll into an INACTIVE course. Please activate the course first.");
+      return;
+    }
 
     // prevent duplicates
     const exists = enrollments.some(
@@ -171,7 +195,7 @@ export default function Enrollments() {
     setPageIndex(0);
   }
 
-  // Helper to render a badge-ish status (active/inactive)
+  // Helper to render a status badge
   const StatusBadge = ({ active }: { active: boolean }) => (
     <span
       className={
@@ -222,11 +246,20 @@ export default function Enrollments() {
                 >
                   <option value="">Select a student…</option>
                   {students.map((s) => (
-                    <option key={s.email} value={s.email}>
+                    <option
+                      key={s.email}
+                      value={s.email}
+                      disabled={s.status === "Inactive"} // guard: disable inactive
+                    >
                       {s.name} — {s.email} {s.status === "Inactive" ? "(inactive)" : ""}
                     </option>
                   ))}
                 </select>
+                {studentIsInactive && (
+                  <p className="text-amber-600 dark:text-amber-400 text-xs">
+                    This student is inactive. Activate them before enrolling.
+                  </p>
+                )}
               </div>
 
               {/* Course select */}
@@ -240,14 +273,27 @@ export default function Enrollments() {
                 >
                   <option value="">Select a course…</option>
                   {courses.map((c) => (
-                    <option key={c.code} value={c.code}>
+                    <option
+                      key={c.code}
+                      value={c.code}
+                      disabled={c.status === "Inactive"} // guard: disable inactive
+                    >
                       {c.code} — {c.title} {c.status === "Inactive" ? "(inactive)" : ""}
                     </option>
                   ))}
                 </select>
+                {courseIsInactive && (
+                  <p className="text-amber-600 dark:text-amber-400 text-xs">
+                    This course is inactive. Activate it before enrolling.
+                  </p>
+                )}
               </div>
 
-              <Button className="w-full mt-4" onClick={onEnroll} disabled={!selectedStudentEmail || !selectedCourseCode}>
+              <Button
+                className="w-full mt-4"
+                onClick={onEnroll}
+                disabled={!canEnroll} // guard: disable button if invalid/inactive
+              >
                 Enroll
               </Button>
             </DialogContent>
