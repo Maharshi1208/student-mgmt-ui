@@ -12,6 +12,7 @@ import { Label } from "@/components/ui/label";
 import { useForm } from "react-hook-form";
 import { z } from "zod";
 import { zodResolver } from "@hookform/resolvers/zod";
+import { exportToCsv } from "@/lib/exportCsv";
 
 /* ---------------------- Validation ---------------------- */
 const courseSchema = z.object({
@@ -115,7 +116,6 @@ export default function Courses() {
   });
 
   function onAdd(values: Course) {
-    // unique code
     if (data.some((c) => c.code.toLowerCase() === values.code.toLowerCase())) {
       alert("A course with this code already exists.");
       return;
@@ -124,8 +124,7 @@ export default function Courses() {
     setData(next);
     setOpenAdd(false);
     addForm.reset();
-    const total = Math.max(1, Math.ceil(next.length / pageSize));
-    setPageIndex(total - 1);
+    setPageIndex(Math.max(1, Math.ceil(next.length / pageSize)) - 1);
   }
 
   /* ----- Edit Course ----- */
@@ -145,7 +144,6 @@ export default function Courses() {
   function onEditSubmit(values: Course) {
     if (!editingCode) return;
 
-    // unique code (if changed)
     const codeChanged = editingCode.toLowerCase() !== values.code.toLowerCase();
     if (
       codeChanged &&
@@ -155,7 +153,6 @@ export default function Courses() {
       return;
     }
 
-    // if setting to Inactive and has enrollments → confirm
     const enrollments = loadJSON<Enrollment[]>(ENROLLMENTS_KEY, []);
     const hasEnrollments = enrollments.some(
       (e) => e.courseCode.toLowerCase() === editingCode.toLowerCase()
@@ -168,11 +165,9 @@ export default function Courses() {
       if (!ok) return;
     }
 
-    // update course list
     const updatedCourses = data.map((c) => (c.code === editingCode ? values : c));
     setData(updatedCourses);
 
-    // propagate code change to Students and Enrollments
     if (codeChanged) {
       const students = loadJSON<Student[]>(STUDENTS_KEY, []);
       const studentsUpdated = students.map((s) =>
@@ -205,22 +200,26 @@ export default function Courses() {
       : "";
     if (!confirm(`Delete ${c.code} — ${c.title}?${extra}`)) return;
 
-    // remove course
     const remainingCourses = data.filter((x) => x.code !== c.code);
     setData(remainingCourses);
 
-    // remove related enrollments
     const remainingEnrollments = enrollments.filter(
       (e) => e.courseCode.toLowerCase() !== c.code.toLowerCase()
     );
     saveJSON(ENROLLMENTS_KEY, remainingEnrollments);
 
-    // clear students' course if it matched this code
     const students = loadJSON<Student[]>(STUDENTS_KEY, []);
     const clearedStudents = students.map((s) =>
       (s.course ?? "").toLowerCase() === c.code.toLowerCase() ? { ...s, course: "" } : s
     );
     saveJSON(STUDENTS_KEY, clearedStudents);
+  }
+
+  /* ----- Export CSV ----- */
+  function onExportCsv() {
+    const headers = ["Code", "Title", "Credits", "Status"];
+    const rows = data.map((c) => [c.code, c.title, c.credits, c.status]);
+    exportToCsv("courses.csv", headers, rows);
   }
 
   return (
@@ -238,6 +237,8 @@ export default function Courses() {
         />
 
         <div className="flex gap-2">
+          <Button variant="outline" onClick={onExportCsv}>Export CSV</Button>
+
           <Dialog open={openAdd} onOpenChange={setOpenAdd}>
             <DialogTrigger asChild>
               <Button>Add Course</Button>

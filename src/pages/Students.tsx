@@ -12,6 +12,7 @@ import { Label } from "@/components/ui/label";
 import { useForm } from "react-hook-form";
 import { z } from "zod";
 import { zodResolver } from "@hookform/resolvers/zod";
+import { exportToCsv } from "@/lib/exportCsv";
 
 /* ---------------------- Validation ---------------------- */
 const studentSchema = z.object({
@@ -64,7 +65,6 @@ function saveJSON<T>(key: string, value: T) {
 /* ======================================================== */
 
 export default function Students() {
-  /* ---------- state ---------- */
   const [students, setStudents] = useState<Student[]>(() => {
     const loaded = loadJSON<Student[]>(STUDENTS_KEY, []);
     return loaded.length ? loaded : SEED;
@@ -77,10 +77,8 @@ export default function Students() {
     ])
   );
 
-  // persist students
   useEffect(() => saveJSON(STUDENTS_KEY, students), [students]);
 
-  // keep courses fresh if changed elsewhere
   useEffect(() => {
     const onStorage = (e: StorageEvent) => {
       if (e.key === COURSES_KEY) setCourses(loadJSON(COURSES_KEY, []));
@@ -145,7 +143,7 @@ export default function Students() {
     return c ? `${c.code} — ${c.title}` : code;
   }
 
-  /* ---------- Add Student dialog ---------- */
+  /* ---------- Add ---------- */
   const [openAdd, setOpenAdd] = useState(false);
   const addForm = useForm<Student>({
     resolver: zodResolver(studentSchema),
@@ -153,33 +151,23 @@ export default function Students() {
   });
 
   function onAdd(values: Student) {
-    // unique email
     if (students.some((s) => s.email.toLowerCase() === values.email.toLowerCase())) {
       alert("A student with this email already exists.");
       return;
     }
-    // integrity: chosen course must be Active (or empty)
     if (values.course) {
       const c = courseMap.get(values.course);
-      if (!c) {
-        alert("Selected course no longer exists.");
-        return;
-      }
-      if (c.status !== "Active") {
-        alert("Cannot assign an INACTIVE course. Please choose an active course.");
-        return;
-      }
+      if (!c) return alert("Selected course no longer exists.");
+      if (c.status !== "Active") return alert("Cannot assign an INACTIVE course.");
     }
-
     const next = [...students, values];
     setStudents(next);
     setOpenAdd(false);
     addForm.reset();
-    const total = Math.max(1, Math.ceil(next.length / pageSize));
-    setPageIndex(total - 1);
+    setPageIndex(Math.max(1, Math.ceil(next.length / pageSize)) - 1);
   }
 
-  /* ---------- Edit Student dialog ---------- */
+  /* ---------- Edit ---------- */
   const [openEdit, setOpenEdit] = useState(false);
   const [editingEmail, setEditingEmail] = useState<string | null>(null);
   const editForm = useForm<Student>({
@@ -195,49 +183,31 @@ export default function Students() {
 
   function onEditSubmit(values: Student) {
     if (!editingEmail) return;
-
     const emailChanged = editingEmail.toLowerCase() !== values.email.toLowerCase();
-
-    // uniqueness
-    if (
-      emailChanged &&
-      students.some((x) => x.email.toLowerCase() === values.email.toLowerCase())
-    ) {
+    if (emailChanged && students.some((x) => x.email.toLowerCase() === values.email.toLowerCase())) {
       alert("A student with this email already exists.");
       return;
     }
-
-    // integrity: course selected must be Active (or empty)
     if (values.course) {
       const c = courseMap.get(values.course);
-      if (!c) {
-        alert("Selected course no longer exists.");
-        return;
-      }
-      if (c.status !== "Active") {
-        alert("Cannot assign an INACTIVE course. Please choose an active course.");
-        return;
-      }
+      if (!c) return alert("Selected course no longer exists.");
+      if (c.status !== "Active") return alert("Cannot assign an INACTIVE course.");
     }
 
-    // integrity: switching student to Inactive while they have enrollments → confirm
     const enrollments = loadJSON<Enrollment[]>(ENROLLMENTS_KEY, []);
     const hadEnrollments = enrollments.some(
       (e) => e.studentEmail.toLowerCase() === editingEmail.toLowerCase()
     );
-    const turningInactive = values.status === "Inactive";
-    if (turningInactive && hadEnrollments) {
+    if (values.status === "Inactive" && hadEnrollments) {
       const ok = confirm(
         "This student has enrollments. Marking them Inactive will prevent new enrollments but will NOT delete existing ones. Continue?"
       );
       if (!ok) return;
     }
 
-    // update students
     const updated = students.map((s) => (s.email === editingEmail ? values : s));
     setStudents(updated);
 
-    // propagate email change in enrollments
     if (emailChanged) {
       const updatedEnrollments = enrollments.map((e) =>
         e.studentEmail.toLowerCase() === editingEmail.toLowerCase()
@@ -251,10 +221,9 @@ export default function Students() {
     setEditingEmail(null);
   }
 
-  /* ---------- Delete Student ---------- */
+  /* ---------- Delete ---------- */
   function onDelete(s: Student) {
     if (!confirm(`Delete ${s.name}? This also removes their enrollments.`)) return;
-
     const next = students.filter((x) => x.email !== s.email);
     setStudents(next);
 
@@ -263,6 +232,16 @@ export default function Students() {
       (e) => e.studentEmail.toLowerCase() !== s.email.toLowerCase()
     );
     saveJSON(ENROLLMENTS_KEY, remaining);
+  }
+
+  /* ---------- Export CSV ---------- */
+  function onExportCsv() {
+    const headers = ["Name", "Email", "Course Code", "Course Title", "Status"];
+    const rows = students.map((s) => {
+      const c = s.course ? courseMap.get(s.course) : undefined;
+      return [s.name, s.email, s.course || "", c?.title || "", s.status];
+    });
+    exportToCsv("students.csv", headers, rows);
   }
 
   return (
@@ -280,6 +259,8 @@ export default function Students() {
         />
 
         <div className="flex gap-2">
+          <Button variant="outline" onClick={onExportCsv}>Export CSV</Button>
+
           <Dialog open={openAdd} onOpenChange={setOpenAdd}>
             <DialogTrigger asChild>
               <Button>Add Student</Button>
