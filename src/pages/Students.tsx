@@ -13,12 +13,13 @@ import { useForm } from "react-hook-form";
 import { z } from "zod";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { exportToCsv } from "@/lib/exportCsv";
+import { toast } from "sonner";
 
 /* ---------------------- Validation ---------------------- */
 const studentSchema = z.object({
   name: z.string().min(2, "Name is required"),
   email: z.string().email("Invalid email"),
-  course: z.string().optional().default(""), // stores course CODE from Courses page
+  course: z.string().optional().default(""),
   status: z.enum(["Active", "Inactive"]),
 });
 type Student = z.infer<typeof studentSchema>;
@@ -29,19 +30,14 @@ type Course = {
   credits: number;
   status: "Active" | "Inactive";
 };
-
-type Enrollment = {
-  studentEmail: string;
-  courseCode: string;
-  createdAt: string;
-};
+type Enrollment = { studentEmail: string; courseCode: string; createdAt: string };
 
 /* ---------------------- Storage keys -------------------- */
 const STUDENTS_KEY = "sms.students.v1";
 const COURSES_KEY = "sms.courses.v1";
 const ENROLLMENTS_KEY = "sms.enrollments.v1";
 
-/* ---------------------- Seed (only if empty) ------------ */
+/* ---------------------- Seed ---------------------------- */
 const SEED: Student[] = [
   { name: "Alice Johnson", email: "alice@example.com", course: "MATH101", status: "Active" },
   { name: "Bob Smith", email: "bob@example.com", course: "SCI201", status: "Inactive" },
@@ -57,9 +53,7 @@ function loadJSON<T>(key: string, fallback: T): T {
   }
 }
 function saveJSON<T>(key: string, value: T) {
-  try {
-    localStorage.setItem(key, JSON.stringify(value));
-  } catch {}
+  try { localStorage.setItem(key, JSON.stringify(value)); } catch {}
 }
 
 /* ======================================================== */
@@ -78,7 +72,6 @@ export default function Students() {
   );
 
   useEffect(() => saveJSON(STUDENTS_KEY, students), [students]);
-
   useEffect(() => {
     const onStorage = (e: StorageEvent) => {
       if (e.key === COURSES_KEY) setCourses(loadJSON(COURSES_KEY, []));
@@ -137,11 +130,8 @@ export default function Students() {
     for (const c of courses) m.set(c.code, c);
     return m;
   }, [courses]);
-  function courseLabel(code: string) {
-    if (!code) return "-";
-    const c = courseMap.get(code);
-    return c ? `${c.code} — ${c.title}` : code;
-  }
+  const courseLabel = (code: string) =>
+    !code ? "-" : courseMap.get(code) ? `${code} — ${courseMap.get(code)!.title}` : code;
 
   /* ---------- Add ---------- */
   const [openAdd, setOpenAdd] = useState(false);
@@ -152,19 +142,20 @@ export default function Students() {
 
   function onAdd(values: Student) {
     if (students.some((s) => s.email.toLowerCase() === values.email.toLowerCase())) {
-      alert("A student with this email already exists.");
+      toast.error("A student with this email already exists.");
       return;
     }
     if (values.course) {
       const c = courseMap.get(values.course);
-      if (!c) return alert("Selected course no longer exists.");
-      if (c.status !== "Active") return alert("Cannot assign an INACTIVE course.");
+      if (!c) return toast.error("Selected course no longer exists.");
+      if (c.status !== "Active") return toast.error("Cannot assign an INACTIVE course.");
     }
     const next = [...students, values];
     setStudents(next);
     setOpenAdd(false);
     addForm.reset();
     setPageIndex(Math.max(1, Math.ceil(next.length / pageSize)) - 1);
+    toast.success("Student added");
   }
 
   /* ---------- Edit ---------- */
@@ -185,13 +176,13 @@ export default function Students() {
     if (!editingEmail) return;
     const emailChanged = editingEmail.toLowerCase() !== values.email.toLowerCase();
     if (emailChanged && students.some((x) => x.email.toLowerCase() === values.email.toLowerCase())) {
-      alert("A student with this email already exists.");
+      toast.error("A student with this email already exists.");
       return;
     }
     if (values.course) {
       const c = courseMap.get(values.course);
-      if (!c) return alert("Selected course no longer exists.");
-      if (c.status !== "Active") return alert("Cannot assign an INACTIVE course.");
+      if (!c) return toast.error("Selected course no longer exists.");
+      if (c.status !== "Active") return toast.error("Cannot assign an INACTIVE course.");
     }
 
     const enrollments = loadJSON<Enrollment[]>(ENROLLMENTS_KEY, []);
@@ -219,6 +210,7 @@ export default function Students() {
 
     setOpenEdit(false);
     setEditingEmail(null);
+    toast.success("Student updated");
   }
 
   /* ---------- Delete ---------- */
@@ -232,6 +224,8 @@ export default function Students() {
       (e) => e.studentEmail.toLowerCase() !== s.email.toLowerCase()
     );
     saveJSON(ENROLLMENTS_KEY, remaining);
+
+    toast.success("Student deleted");
   }
 
   /* ---------- Export CSV ---------- */
@@ -241,7 +235,8 @@ export default function Students() {
       const c = s.course ? courseMap.get(s.course) : undefined;
       return [s.name, s.email, s.course || "", c?.title || "", s.status];
     });
-    exportToCsv("students.csv", headers, rows);
+    exportToCsv("students", headers, rows, { timestamp: true });
+    toast.info("CSV exported");
   }
 
   return (
@@ -273,13 +268,11 @@ export default function Students() {
                 <div>
                   <Label htmlFor="name">Name</Label>
                   <Input id="name" {...addForm.register("name")} />
-                  <ErrorText message={addForm.formState.errors.name?.message} />
                 </div>
 
                 <div>
                   <Label htmlFor="email">Email</Label>
                   <Input id="email" type="email" {...addForm.register("email")} />
-                  <ErrorText message={addForm.formState.errors.email?.message} />
                 </div>
 
                 <div>
@@ -296,7 +289,6 @@ export default function Students() {
                       </option>
                     ))}
                   </select>
-                  <ErrorText message={addForm.formState.errors.course?.message} />
                 </div>
 
                 <div>
@@ -309,7 +301,6 @@ export default function Students() {
                     <option value="Active">Active</option>
                     <option value="Inactive">Inactive</option>
                   </select>
-                  <ErrorText message={addForm.formState.errors.status?.message} />
                 </div>
 
                 <Button type="submit" className="w-full">Save</Button>
@@ -428,7 +419,6 @@ export default function Students() {
             <div>
               <Label htmlFor="name_e">Name</Label>
               <Input id="name_e" {...editForm.register("name")} />
-              <ErrorText message={editForm.formState.errors.name?.message} />
             </div>
 
             <div>
@@ -437,7 +427,6 @@ export default function Students() {
               <p className="text-xs text-muted-foreground mt-1">
                 Changing the email will update their enrollments too.
               </p>
-              <ErrorText message={editForm.formState.errors.email?.message} />
             </div>
 
             <div>
@@ -454,7 +443,6 @@ export default function Students() {
                   </option>
                 ))}
               </select>
-              <ErrorText message={editForm.formState.errors.course?.message} />
             </div>
 
             <div>
@@ -467,7 +455,6 @@ export default function Students() {
                 <option value="Active">Active</option>
                 <option value="Inactive">Inactive</option>
               </select>
-              <ErrorText message={editForm.formState.errors.status?.message} />
             </div>
 
             <div className="flex gap-2">
@@ -484,10 +471,6 @@ export default function Students() {
 }
 
 /* ---------------------- Small helpers ------------------- */
-function ErrorText({ message }: { message?: string }) {
-  if (!message) return null;
-  return <p className="text-red-500 text-xs mt-1">{message}</p>;
-}
 function Th({
   onClick,
   label,

@@ -10,6 +10,7 @@ import {
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { exportToCsv } from "@/lib/exportCsv";
+import { toast } from "sonner";
 
 /* ---------- Storage keys ---------- */
 const STUDENTS_KEY = "sms.students.v1";
@@ -35,7 +36,6 @@ export default function Enrollments() {
   const [enrollments, setEnrollments] = useState<Enrollment[]>(() => loadJSON(ENROLLMENTS_KEY, []));
 
   useEffect(() => saveJSON(ENROLLMENTS_KEY, enrollments), [enrollments]);
-
   useEffect(() => {
     const onStorage = (e: StorageEvent) => {
       if (e.key === STUDENTS_KEY) setStudents(loadJSON(STUDENTS_KEY, []));
@@ -68,7 +68,10 @@ export default function Enrollments() {
 
   const pageCount = Math.max(1, Math.ceil(filtered.length / pageSize));
   const page = Math.min(pageIndex, pageCount - 1);
-  const paged = useMemo(() => filtered.slice(page * pageSize, page * pageSize + pageSize), [filtered, page, pageSize]);
+  const paged = useMemo(
+    () => filtered.slice(page * pageSize, page * pageSize + pageSize),
+    [filtered, page, pageSize]
+  );
 
   /* ---------- create dialog ---------- */
   const [open, setOpen] = useState(false);
@@ -84,15 +87,16 @@ export default function Enrollments() {
   function onEnroll() {
     const s = selStudent, c = selCourse;
     if (!s || !c) return;
-    if (s.status !== "Active") return alert("Cannot enroll an INACTIVE student.");
-    if (c.status !== "Active") return alert("Cannot enroll into an INACTIVE course.");
+    if (s.status !== "Active") { toast.error("Cannot enroll an INACTIVE student."); return; }
+    if (c.status !== "Active") { toast.error("Cannot enroll into an INACTIVE course."); return; }
     if (enrollments.some(e => e.studentEmail === s.email && e.courseCode === c.code)) {
-      return alert("This student is already enrolled in that course.");
+      toast.error("This student is already enrolled in that course."); return;
     }
     const next = [...enrollments, { studentEmail: s.email, courseCode: c.code, createdAt: new Date().toISOString() }];
     setEnrollments(next);
     setPageIndex(Math.max(1, Math.ceil(next.length / pageSize)) - 1);
     setSelectedStudentEmail(""); setSelectedCourseCode(""); setOpen(false);
+    toast.success("Enrollment created");
   }
 
   /* ---------- edit dialog ---------- */
@@ -118,13 +122,13 @@ export default function Enrollments() {
     if (!editing) return;
     const s = editStudent, c = editCourse;
     if (!s || !c) return;
-    if (s.status !== "Active") return alert("Cannot set enrollment to an INACTIVE student.");
-    if (c.status !== "Active") return alert("Cannot set enrollment into an INACTIVE course.");
+    if (s.status !== "Active") { toast.error("Cannot set enrollment to an INACTIVE student."); return; }
+    if (c.status !== "Active") { toast.error("Cannot set enrollment into an INACTIVE course."); return; }
 
     const duplicate = enrollments.some(
       (e) => e !== editing && e.studentEmail === editStudentEmail && e.courseCode === editCourseCode
     );
-    if (duplicate) return alert("Another identical enrollment already exists.");
+    if (duplicate) { toast.error("Another identical enrollment already exists."); return; }
 
     const updated = enrollments.map((e) =>
       e === editing ? { ...e, studentEmail: editStudentEmail, courseCode: editCourseCode } : e
@@ -132,16 +136,19 @@ export default function Enrollments() {
     setEnrollments(updated);
     setOpenEdit(false);
     setEditing(null);
+    toast.success("Enrollment updated");
   }
 
   /* ---------- delete / reset ---------- */
   function onDelete(en: Enrollment) {
     if (!confirm("Remove this enrollment?")) return;
     setEnrollments(prev => prev.filter(e => !(e.studentEmail === en.studentEmail && e.courseCode === en.courseCode)));
+    toast.success("Enrollment removed");
   }
   function resetAll() {
     if (!confirm("Clear all enrollments?")) return;
     setEnrollments([]); setPageIndex(0);
+    toast.success("All enrollments cleared");
   }
 
   /* ---------- export CSV ---------- */
@@ -168,7 +175,8 @@ export default function Enrollments() {
         en.createdAt,
       ];
     });
-    exportToCsv("enrollments.csv", headers, rows);
+    exportToCsv("enrollments", headers, rows, { timestamp: true });
+    toast.info("CSV exported");
   }
 
   /* ---------- UI ---------- */

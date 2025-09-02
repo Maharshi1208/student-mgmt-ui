@@ -13,6 +13,7 @@ import { useForm } from "react-hook-form";
 import { z } from "zod";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { exportToCsv } from "@/lib/exportCsv";
+import { toast } from "sonner";
 
 /* ---------------------- Validation ---------------------- */
 const courseSchema = z.object({
@@ -23,17 +24,8 @@ const courseSchema = z.object({
 });
 type Course = z.infer<typeof courseSchema>;
 
-type Student = {
-  name: string;
-  email: string;
-  course: string;
-  status: "Active" | "Inactive";
-};
-type Enrollment = {
-  studentEmail: string;
-  courseCode: string;
-  createdAt: string;
-};
+type Student = { name: string; email: string; course: string; status: "Active" | "Inactive" };
+type Enrollment = { studentEmail: string; courseCode: string; createdAt: string };
 
 /* ---------------------- Storage keys -------------------- */
 const COURSES_KEY = "sms.courses.v1";
@@ -57,9 +49,7 @@ function loadJSON<T>(key: string, fallback: T): T {
   }
 }
 function saveJSON<T>(key: string, value: T) {
-  try {
-    localStorage.setItem(key, JSON.stringify(value));
-  } catch {}
+  try { localStorage.setItem(key, JSON.stringify(value)); } catch {}
 }
 
 /* ======================================================== */
@@ -117,7 +107,7 @@ export default function Courses() {
 
   function onAdd(values: Course) {
     if (data.some((c) => c.code.toLowerCase() === values.code.toLowerCase())) {
-      alert("A course with this code already exists.");
+      toast.error("A course with this code already exists.");
       return;
     }
     const next = [...data, values];
@@ -125,6 +115,7 @@ export default function Courses() {
     setOpenAdd(false);
     addForm.reset();
     setPageIndex(Math.max(1, Math.ceil(next.length / pageSize)) - 1);
+    toast.success("Course added");
   }
 
   /* ----- Edit Course ----- */
@@ -145,11 +136,8 @@ export default function Courses() {
     if (!editingCode) return;
 
     const codeChanged = editingCode.toLowerCase() !== values.code.toLowerCase();
-    if (
-      codeChanged &&
-      data.some((x) => x.code.toLowerCase() === values.code.toLowerCase())
-    ) {
-      alert("A course with this code already exists.");
+    if (codeChanged && data.some((x) => x.code.toLowerCase() === values.code.toLowerCase())) {
+      toast.error("A course with this code already exists.");
       return;
     }
 
@@ -187,6 +175,7 @@ export default function Courses() {
 
     setOpenEdit(false);
     setEditingCode(null);
+    toast.success("Course updated");
   }
 
   /* ----- Delete Course ----- */
@@ -213,13 +202,16 @@ export default function Courses() {
       (s.course ?? "").toLowerCase() === c.code.toLowerCase() ? { ...s, course: "" } : s
     );
     saveJSON(STUDENTS_KEY, clearedStudents);
+
+    toast.success("Course deleted");
   }
 
   /* ----- Export CSV ----- */
   function onExportCsv() {
     const headers = ["Code", "Title", "Credits", "Status"];
     const rows = data.map((c) => [c.code, c.title, c.credits, c.status]);
-    exportToCsv("courses.csv", headers, rows);
+    exportToCsv("courses", headers, rows, { timestamp: true });
+    toast.info("CSV exported");
   }
 
   return (
@@ -251,17 +243,14 @@ export default function Courses() {
                 <div>
                   <Label htmlFor="code">Code</Label>
                   <Input id="code" {...addForm.register("code")} />
-                  <ErrorText message={addForm.formState.errors.code?.message} />
                 </div>
                 <div>
                   <Label htmlFor="title">Title</Label>
                   <Input id="title" {...addForm.register("title")} />
-                  <ErrorText message={addForm.formState.errors.title?.message} />
                 </div>
                 <div>
                   <Label htmlFor="credits">Credits</Label>
                   <Input id="credits" type="number" {...addForm.register("credits")} />
-                  <ErrorText message={addForm.formState.errors.credits?.message} />
                 </div>
                 <div>
                   <Label htmlFor="status">Status</Label>
@@ -273,7 +262,6 @@ export default function Courses() {
                     <option value="Active">Active</option>
                     <option value="Inactive">Inactive</option>
                   </select>
-                  <ErrorText message={addForm.formState.errors.status?.message} />
                 </div>
                 <Button type="submit" className="w-full">Save</Button>
               </form>
@@ -373,17 +361,14 @@ export default function Courses() {
             <div>
               <Label htmlFor="code_e">Code</Label>
               <Input id="code_e" {...editForm.register("code")} />
-              <ErrorText message={editForm.formState.errors.code?.message} />
             </div>
             <div>
               <Label htmlFor="title_e">Title</Label>
               <Input id="title_e" {...editForm.register("title")} />
-              <ErrorText message={editForm.formState.errors.title?.message} />
             </div>
             <div>
               <Label htmlFor="credits_e">Credits</Label>
               <Input id="credits_e" type="number" {...editForm.register("credits")} />
-              <ErrorText message={editForm.formState.errors.credits?.message} />
             </div>
             <div>
               <Label htmlFor="status_e">Status</Label>
@@ -395,7 +380,6 @@ export default function Courses() {
                 <option value="Active">Active</option>
                 <option value="Inactive">Inactive</option>
               </select>
-              <ErrorText message={editForm.formState.errors.status?.message} />
             </div>
 
             <div className="flex gap-2">
@@ -412,10 +396,6 @@ export default function Courses() {
 }
 
 /* ---------------------- Helpers ----------------------- */
-function ErrorText({ message }: { message?: string }) {
-  if (!message) return null;
-  return <p className="text-red-500 text-xs mt-1">{message}</p>;
-}
 function Th({
   onClick,
   label,

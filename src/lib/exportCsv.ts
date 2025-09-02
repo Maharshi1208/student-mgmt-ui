@@ -1,29 +1,28 @@
-// Tiny CSV exporter: handles quotes/commas/newlines and triggers a download.
 export function exportToCsv(
-  filename: string,
+  baseName: string,
   headers: string[],
-  rows: (string | number | boolean | null | undefined)[][]
+  rows: (string | number | boolean | null | undefined)[][],
+  opts: { timestamp?: boolean } = {}
 ) {
-  const esc = (v: any) => {
-    const s = v === null || v === undefined ? "" : String(v);
-    // Quote if contains comma, quote, or newline
-    if (/[",\n]/.test(s)) {
-      return `"${s.replace(/"/g, '""')}"`;
-    }
-    return s;
-  };
+  const timestamp = opts.timestamp
+    ? new Date().toISOString().replace(/[:.]/g, "-").slice(0, 16)
+    : "";
+  const filename = `${baseName}${timestamp ? `-${timestamp}` : ""}.csv`;
 
-  const lines = [
-    headers.map(esc).join(","),
-    ...rows.map((r) => r.map(esc).join(",")),
-  ];
-  const blob = new Blob([lines.join("\n")], { type: "text/csv;charset=utf-8" });
+  const csv = [headers.join(","), ...rows.map(r => r.map(escape).join(","))].join("\n");
 
-  const a = document.createElement("a");
-  a.href = URL.createObjectURL(blob);
-  a.download = filename.endsWith(".csv") ? filename : `${filename}.csv`;
-  document.body.appendChild(a);
-  a.click();
-  a.remove();
-  URL.revokeObjectURL(a.href);
+  const blob = new Blob([csv], { type: "text/csv;charset=utf-8;" });
+  const url = URL.createObjectURL(blob);
+  const link = document.createElement("a");
+  link.href = url;
+  link.setAttribute("download", filename);
+  document.body.appendChild(link);
+  link.click();
+  document.body.removeChild(link);
+}
+
+function escape(val: any) {
+  if (val == null) return "";
+  const s = String(val);
+  return s.includes(",") || s.includes('"') ? `"${s.replace(/"/g, '""')}"` : s;
 }

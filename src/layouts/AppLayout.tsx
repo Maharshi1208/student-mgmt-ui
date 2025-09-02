@@ -1,55 +1,35 @@
-import { ReactNode } from "react";
-import ThemeToggle from "@/components/ThemeToggle";
-import { NavLink, useLocation } from "react-router-dom";
+import { Link, NavLink, Outlet } from "react-router-dom";
 import { Button } from "@/components/ui/button";
+import ThemeToggle from "@/components/ThemeToggle";
+import { Toaster } from "@/components/ui/sonner";
 
-interface Props {
-  children: ReactNode;
-}
-
-export default function AppLayout({ children }: Props) {
-  const { pathname } = useLocation();
-
-  const titleMap: Record<string, string> = {
-    "/": "Dashboard",
-    "/students": "Students",
-    "/courses": "Courses",
-    "/enrollments": "Enrollments",
-  };
-  const title = titleMap[pathname] ?? "Dashboard";
-
-  const LinkBtn = ({ to, label }: { to: string; label: string }) => (
-    <Button
-      asChild
-      variant={pathname === to ? "secondary" : "ghost"}
-      className="w-full justify-start"
-    >
-      <NavLink to={to}>{label}</NavLink>
-    </Button>
-  );
+export default function AppLayout() {
+  const navLink =
+    "px-3 py-2 rounded-md text-sm font-medium hover:bg-muted aria-[current=page]:bg-muted";
 
   return (
-    <div className="flex min-h-screen bg-background">
-      {/* Sidebar */}
-      <aside className="w-64 border-r bg-card p-4 hidden md:block">
-        <h2 className="text-xl font-bold mb-6">StudentMgmt</h2>
-        <nav className="space-y-2">
-          <LinkBtn to="/" label="Dashboard" />
-          <LinkBtn to="/students" label="Students" />
-          <LinkBtn to="/courses" label="Courses" />
-          <LinkBtn to="/enrollments" label="Enrollments" />
-        </nav>
-      </aside>
+    <div className="min-h-screen bg-background text-foreground">
+      <header className="border-b">
+        <div className="mx-auto max-w-6xl px-4 h-14 flex items-center justify-between">
+          <Link to="/" className="font-semibold">Student Mgmt</Link>
+          <nav className="flex items-center gap-1">
+            <NavLink to="/" end className={navLink}>Dashboard</NavLink>
+            <NavLink to="/students" className={navLink}>Students</NavLink>
+            <NavLink to="/courses" className={navLink}>Courses</NavLink>
+            <NavLink to="/enrollments" className={navLink}>Enrollments</NavLink>
+          </nav>
+          <div className="flex items-center gap-2">
+            <ThemeToggle />
+          </div>
+        </div>
+      </header>
 
-      {/* Main */}
-      <main className="flex-1 p-6">
-        <header className="flex items-center justify-between mb-6">
-          <h1 className="text-2xl font-semibold">{title}</h1>
-          <ThemeToggle />
-        </header>
-        {children}
+      <main className="mx-auto max-w-6xl px-4 py-6">
+        <Outlet />
       </main>
+
+      {/* Toast portal */}
+      <Toaster richColors position="top-center" closeButton />
     </div>
   );
 }
-
