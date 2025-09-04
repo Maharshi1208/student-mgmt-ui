@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -12,6 +12,7 @@ import {
 import { useNavigate } from "react-router-dom";
 import { toast } from "sonner";
 import { studentsApi, type Student } from "@/lib/api";
+import Papa from "papaparse";
 
 export default function Students() {
   const navigate = useNavigate();
@@ -30,6 +31,10 @@ export default function Students() {
   const [editEmail, setEditEmail] = useState<string | null>(null); // id for PATCH
   const [editName, setEditName] = useState("");
   const [editStatus, setEditStatus] = useState<"ACTIVE" | "INACTIVE">("ACTIVE");
+
+  // CSV import
+  const fileInputRef = useRef<HTMLInputElement | null>(null);
+  const [importing, setImporting] = useState(false);
 
   // Fetch list on mount
   useEffect(() => {
@@ -102,12 +107,102 @@ export default function Students() {
     }
   }
 
+  /* ---------- CSV Import ---------- */
+  function triggerImport() {
+    fileInputRef.current?.click();
+  }
+
+  function parseBooleanishStatus(v: string | undefined): "ACTIVE" | "INACTIVE" {
+    if (!v) return "ACTIVE";
+    const s = String(v).trim().toUpperCase();
+    if (s === "ACTIVE" || s === "A" || s === "TRUE" || s === "1") return "ACTIVE";
+    if (s === "INACTIVE" || s === "I" || s === "FALSE" || s === "0") return "INACTIVE";
+    return "ACTIVE";
+  }
+
+  async function handleCsvFile(e: React.ChangeEvent<HTMLInputElement>) {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    setImporting(true);
+
+    Papa.parse(file, {
+      header: true,
+      skipEmptyLines: true,
+      transformHeader: (h) => h.trim().toLowerCase(),
+      complete: async (result) => {
+        // rows expected to have: name, email, status?
+        const rows = (result.data as any[]).filter(Boolean);
+        if (!Array.isArray(rows) || rows.length === 0) {
+          setImporting(false);
+          toast.error("CSV appears empty");
+          return;
+        }
+
+        let ok = 0;
+        let fail = 0;
+        const newOnes: Student[] = [];
+
+        // create students sequentially to keep UX simple & avoid flooding server
+        for (const r of rows) {
+          const name = (r.name ?? "").toString().trim();
+          const email = (r.email ?? "").toString().trim();
+          const status = parseBooleanishStatus(r.status);
+
+          if (!name || !email) {
+            fail++;
+            continue;
+          }
+
+          try {
+            const created = await studentsApi.create({
+              name,
+              email,
+              status,
+              course: null,
+            });
+            ok++;
+            newOnes.push(created);
+          } catch (_err) {
+            // could be duplicate/validation error
+            fail++;
+          }
+        }
+
+        if (ok > 0) setData((d) => [...d, ...newOnes]);
+        setImporting(false);
+
+        if (fail === 0) toast.success(`Imported ${ok} students`);
+        else if (ok === 0) toast.error(`No rows imported. ${fail} failed.`);
+        else toast.warning(`Imported ${ok} students, ${fail} failed`);
+      },
+      error: (err) => {
+        setImporting(false);
+        toast.error(`Parse error: ${err?.message || "Unknown error"}`);
+      },
+    });
+
+    // clear input so same file can be picked again if needed
+    e.target.value = "";
+  }
+
   return (
     <div className="space-y-4">
       {/* Header / toolbar */}
       <div className="flex justify-between items-center">
         <h1 className="text-2xl font-semibold">Students</h1>
         <div className="flex gap-2">
+          {/* Hidden file input for CSV */}
+          <input
+            ref={fileInputRef}
+            type="file"
+            accept=".csv,text/csv"
+            onChange={handleCsvFile}
+            className="hidden"
+          />
+          <Button variant="outline" onClick={triggerImport} disabled={importing}>
+            {importing ? "Importing…" : "Import CSV"}
+          </Button>
+
           <Button
             variant="outline"
             onClick={() => navigate("/report/students?print=1")}
