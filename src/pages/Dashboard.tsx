@@ -1,6 +1,13 @@
 import { useEffect, useMemo, useState } from "react";
 import { Card } from "@/components/ui/card";
-import { studentsApi, coursesApi, enrollmentsApi, type Student, type Course, type Enrollment } from "@/lib/api";
+import {
+  studentsApi,
+  coursesApi,
+  enrollmentsApi,
+  type Student,
+  type Course,
+  type Enrollment,
+} from "@/lib/api";
 
 /* Recharts */
 import {
@@ -11,6 +18,11 @@ import {
   Tooltip,
   ResponsiveContainer,
   CartesianGrid,
+  PieChart,
+  Pie,
+  Legend,
+  LineChart,
+  Line,
 } from "recharts";
 
 export default function Dashboard() {
@@ -38,15 +50,22 @@ export default function Dashboard() {
     };
   }, []);
 
-  const activeStudents = useMemo(() => students.filter((s) => s.status === "ACTIVE").length, [students]);
+  /* === KPIs === */
+  const activeStudents = useMemo(
+    () => students.filter((s) => s.status === "ACTIVE").length,
+    [students]
+  );
   const inactiveStudents = students.length - activeStudents;
 
-  const activeCourses = useMemo(() => courses.filter((c) => c.status === "ACTIVE").length, [courses]);
+  const activeCourses = useMemo(
+    () => courses.filter((c) => c.status === "ACTIVE").length,
+    [courses]
+  );
   const inactiveCourses = courses.length - activeCourses;
 
   const totalEnrollments = enrollments.length;
 
-  // bar chart: enrollments per course (top 8 by count)
+  /* === Bar: enrollments per course (top 8) === */
   const enrollmentsPerCourse = useMemo(() => {
     const counts = new Map<string, number>();
     for (const e of enrollments) {
@@ -60,22 +79,61 @@ export default function Dashboard() {
     return rows.slice(0, 8);
   }, [enrollments, courses]);
 
+  /* === Pie data === */
+  const studentsPie = useMemo(
+    () => [
+      { name: "Active", value: activeStudents },
+      { name: "Inactive", value: inactiveStudents },
+    ],
+    [activeStudents, inactiveStudents]
+  );
+  const coursesPie = useMemo(
+    () => [
+      { name: "Active", value: activeCourses },
+      { name: "Inactive", value: inactiveCourses },
+    ],
+    [activeCourses, inactiveCourses]
+  );
+
+  /* === Optional: line chart of enrollments over time (by day) === */
+  const enrollmentsByDay = useMemo(() => {
+    const map = new Map<string, number>();
+    for (const e of enrollments) {
+      const d = new Date(e.createdAt ?? Date.now());
+      const key = d.toISOString().slice(0, 10); // YYYY-MM-DD
+      map.set(key, (map.get(key) ?? 0) + 1);
+    }
+    const rows = Array.from(map.entries())
+      .map(([date, count]) => ({ date, count }))
+      .sort((a, b) => a.date.localeCompare(b.date));
+    return rows;
+  }, [enrollments]);
+
   return (
     <div className="space-y-6">
       <h1 className="text-2xl font-semibold">Dashboard</h1>
 
-      {/* Loading / error */}
       {loading && <div className="text-sm text-muted-foreground">Loading…</div>}
       {err && !loading && (
-        <div className="text-sm text-red-600 dark:text-red-400">Failed to load: {err}</div>
+        <div className="text-sm text-red-600 dark:text-red-400">
+          Failed to load: {err}
+        </div>
       )}
 
-      {/* KPI cards */}
       {!loading && !err && (
         <>
+          {/* KPI cards */}
           <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
-            <Kpi title="Students (Active)" value={activeStudents} sub={`${inactiveStudents} inactive`} />
-            <Kpi title="Courses (Active)" value={activeCourses} sub={`${inactiveCourses} inactive`} />
+            <Kpi
+              title="Students (Active)"
+              value={activeStudents}
+              sub={`${inactiveStudents} inactive`}
+            />
+            <Kpi
+              title="Courses (Active)"
+              value={activeCourses}
+              sub={`${inactiveCourses} inactive`}
+            />
             <Kpi title="Enrollments" value={totalEnrollments} />
             <Kpi
               title="Avg. Enrollments / Active Course"
@@ -87,11 +145,66 @@ export default function Dashboard() {
             />
           </div>
 
-          {/* Chart */}
+          {/* Two pies: Students & Courses */}
+          <div className="grid gap-4 lg:grid-cols-2">
+            <Card className="p-4">
+              <h2 className="text-lg font-medium mb-2">Students — Active vs Inactive</h2>
+              {students.length === 0 ? (
+                <div className="text-sm text-muted-foreground">No students yet.</div>
+              ) : (
+                <div className="h-64">
+                  <ResponsiveContainer width="100%" height="100%">
+                    <PieChart>
+                      <Pie
+                        data={studentsPie}
+                        dataKey="value"
+                        nameKey="name"
+                        cx="50%"
+                        cy="50%"
+                        outerRadius="80%"
+                        label
+                      />
+                      <Legend />
+                      <Tooltip />
+                    </PieChart>
+                  </ResponsiveContainer>
+                </div>
+              )}
+            </Card>
+
+            <Card className="p-4">
+              <h2 className="text-lg font-medium mb-2">Courses — Active vs Inactive</h2>
+              {courses.length === 0 ? (
+                <div className="text-sm text-muted-foreground">No courses yet.</div>
+              ) : (
+                <div className="h-64">
+                  <ResponsiveContainer width="100%" height="100%">
+                    <PieChart>
+                      <Pie
+                        data={coursesPie}
+                        dataKey="value"
+                        nameKey="name"
+                        cx="50%"
+                        cy="50%"
+                        outerRadius="80%"
+                        label
+                      />
+                      <Legend />
+                      <Tooltip />
+                    </PieChart>
+                  </ResponsiveContainer>
+                </div>
+              )}
+            </Card>
+          </div>
+
+          {/* Bar: Enrollments per course */}
           <Card className="p-4">
             <div className="flex items-center justify-between mb-3">
               <h2 className="text-lg font-medium">Enrollments per Course</h2>
-              <span className="text-xs text-muted-foreground">Top {Math.min(8, enrollmentsPerCourse.length)}</span>
+              <span className="text-xs text-muted-foreground">
+                Top {Math.min(8, enrollmentsPerCourse.length)}
+              </span>
             </div>
             {enrollmentsPerCourse.length === 0 ? (
               <div className="text-sm text-muted-foreground">No enrollments yet.</div>
@@ -105,12 +218,34 @@ export default function Dashboard() {
                     <Tooltip
                       formatter={(val: any) => [val, "Enrollments"]}
                       labelFormatter={(label) => {
-                        const entry = enrollmentsPerCourse.find((r) => r.code === label);
+                        const entry = enrollmentsPerCourse.find(
+                          (r) => r.code === label
+                        );
                         return entry ? `${entry.code} — ${entry.title}` : label;
                       }}
                     />
                     <Bar dataKey="count" />
                   </BarChart>
+                </ResponsiveContainer>
+              </div>
+            )}
+          </Card>
+
+          {/* Line: Enrollments per day */}
+          <Card className="p-4">
+            <h2 className="text-lg font-medium mb-3">Enrollments per Day</h2>
+            {enrollmentsByDay.length === 0 ? (
+              <div className="text-sm text-muted-foreground">No enrollment activity yet.</div>
+            ) : (
+              <div className="h-72">
+                <ResponsiveContainer width="100%" height="100%">
+                  <LineChart data={enrollmentsByDay}>
+                    <CartesianGrid strokeDasharray="3 3" />
+                    <XAxis dataKey="date" />
+                    <YAxis allowDecimals={false} />
+                    <Tooltip formatter={(v: any) => [v, "Enrollments"]} />
+                    <Line type="monotone" dataKey="count" dot />
+                  </LineChart>
                 </ResponsiveContainer>
               </div>
             )}
@@ -121,7 +256,15 @@ export default function Dashboard() {
   );
 }
 
-function Kpi({ title, value, sub }: { title: string; value: number | string; sub?: string }) {
+function Kpi({
+  title,
+  value,
+  sub,
+}: {
+  title: string;
+  value: number | string;
+  sub?: string;
+}) {
   return (
     <Card className="p-4">
       <div className="text-sm text-muted-foreground">{title}</div>
