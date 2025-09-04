@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -20,6 +20,7 @@ import {
   type Course,
 } from "@/lib/api";
 import { exportToCsv } from "@/lib/exportCsv";
+import Papa from "papaparse";
 
 export default function Enrollments() {
   const navigate = useNavigate();
@@ -39,6 +40,10 @@ export default function Enrollments() {
   const [editId, setEditId] = useState<number | null>(null);
   const [studentEmail, setStudentEmail] = useState("");
   const [courseCode, setCourseCode] = useState("");
+
+  // CSV import
+  const fileInputRef = useRef<HTMLInputElement | null>(null);
+  const [importing, setImporting] = useState(false);
 
   // maps for quick lookups
   const studentMap = useMemo(() => {
@@ -95,7 +100,7 @@ export default function Enrollments() {
   async function onSave() {
     if (!studentEmail || !courseCode) return toast.error("Choose student and course");
 
-    // Guard: must be ACTIVE on server too, but we also prevent in UI
+    // UI guard (server will re-check)
     const s = studentMap.get(studentEmail);
     const c = courseMap.get(courseCode);
     if (!s || !c) return toast.error("Invalid student or course");
@@ -148,6 +153,91 @@ export default function Enrollments() {
     toast.info("CSV exported");
   }
 
+  /* ---------- CSV Import ---------- */
+  function triggerImport() {
+    fileInputRef.current?.click();
+  }
+
+  function normalizeEmail(s: unknown): string {
+    return String(s ?? "").trim().toLowerCase();
+  }
+  function normalizeCode(s: unknown): string {
+    return String(s ?? "").trim().toUpperCase();
+  }
+
+  async function handleCsvFile(e: React.ChangeEvent<HTMLInputElement>) {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    setImporting(true);
+
+    Papa.parse(file, {
+      header: true,
+      skipEmptyLines: true,
+      transformHeader: (h) => h.trim().toLowerCase(),
+      complete: async (result) => {
+        const rowsCsv = (result.data as any[]).filter(Boolean);
+        if (!Array.isArray(rowsCsv) || rowsCsv.length === 0) {
+          setImporting(false);
+          toast.error("CSV appears empty");
+          return;
+        }
+
+        let ok = 0;
+        let fail = 0;
+        const createdBatch: Enrollment[] = [];
+
+        // Import sequentially to keep rate low and errors readable
+        for (const r of rowsCsv) {
+          const email = normalizeEmail(r.studentEmail ?? r.studentemail ?? r.email);
+          const code = normalizeCode(r.courseCode ?? r.coursecode ?? r.code);
+
+          if (!email || !code) {
+            fail++;
+            continue;
+          }
+
+          // Optional pre-check (helps avoid obvious errors before hitting server)
+          const s = studentMap.get(email);
+          const c = courseMap.get(code);
+          if (!s || !c) {
+            fail++;
+            continue;
+          }
+          if (s.status !== "ACTIVE" || c.status !== "ACTIVE") {
+            // server would reject anyway
+            fail++;
+            continue;
+          }
+
+          try {
+            const created = await enrollmentsApi.create({
+              studentEmail: email,
+              courseCode: code,
+            });
+            createdBatch.push(created);
+            ok++;
+          } catch (_err) {
+            fail++;
+          }
+        }
+
+        if (ok > 0) setRows((r) => [...createdBatch, ...r]);
+        setImporting(false);
+
+        if (fail === 0) toast.success(`Imported ${ok} enrollments`);
+        else if (ok === 0) toast.error(`No rows imported. ${fail} failed.`);
+        else toast.warning(`Imported ${ok} enrollments, ${fail} failed`);
+      },
+      error: (err) => {
+        setImporting(false);
+        toast.error(`Parse error: ${err?.message || "Unknown error"}`);
+      },
+    });
+
+    // allow same file again later
+    e.target.value = "";
+  }
+
   const filtered = useMemo(() => {
     if (!q.trim()) return rows;
     const term = q.toLowerCase();
@@ -163,12 +253,8 @@ export default function Enrollments() {
     });
   }, [q, rows, studentMap, courseMap]);
 
-  const studentOptions = students
-    .slice()
-    .sort((a, b) => a.name.localeCompare(b.name));
-  const courseOptions = courses
-    .slice()
-    .sort((a, b) => a.code.localeCompare(b.code));
+  const studentOptions = students.slice().sort((a, b) => a.name.localeCompare(b.name));
+  const courseOptions = courses.slice().sort((a, b) => a.code.localeCompare(b.code));
 
   return (
     <div className="space-y-4">
@@ -182,6 +268,19 @@ export default function Enrollments() {
             onChange={(e) => setQ(e.target.value)}
             className="w-72"
           />
+
+          {/* Hidden file input for CSV */}
+          <input
+            ref={fileInputRef}
+            type="file"
+            accept=".csv,text/csv"
+            onChange={handleCsvFile}
+            className="hidden"
+          />
+          <Button variant="outline" onClick={triggerImport} disabled={importing}>
+            {importing ? "Importing…" : "Import CSV"}
+          </Button>
+
           <Button variant="outline" onClick={onExportCsv}>
             Export CSV
           </Button>
@@ -191,6 +290,7 @@ export default function Enrollments() {
           >
             Print PDF
           </Button>
+
           <Dialog open={open} onOpenChange={setOpen}>
             <DialogTrigger asChild>
               <Button onClick={openCreate}>Enroll student</Button>
