@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -13,6 +13,7 @@ import { useNavigate } from "react-router-dom";
 import { toast } from "sonner";
 import { coursesApi, type Course } from "@/lib/api";
 import { exportToCsv } from "@/lib/exportCsv";
+import Papa from "papaparse";
 
 export default function Courses() {
   const navigate = useNavigate();
@@ -33,6 +34,10 @@ export default function Courses() {
   const [editTitle, setEditTitle] = useState("");
   const [editCredits, setEditCredits] = useState<number>(3);
   const [editStatus, setEditStatus] = useState<"ACTIVE" | "INACTIVE">("ACTIVE");
+
+  // CSV import
+  const fileInputRef = useRef<HTMLInputElement | null>(null);
+  const [importing, setImporting] = useState(false);
 
   useEffect(() => {
     let on = true;
@@ -111,6 +116,87 @@ export default function Courses() {
     }
   }
 
+  /* ---------- CSV Import ---------- */
+  function triggerImport() {
+    fileInputRef.current?.click();
+  }
+
+  function parseStatus(v: string | undefined): "ACTIVE" | "INACTIVE" {
+    if (!v) return "ACTIVE";
+    const s = String(v).trim().toUpperCase();
+    if (["ACTIVE", "A", "TRUE", "1"].includes(s)) return "ACTIVE";
+    if (["INACTIVE", "I", "FALSE", "0"].includes(s)) return "INACTIVE";
+    return "ACTIVE";
+  }
+
+  function parseCredits(v: unknown): number {
+    const n = Number(v);
+    return Number.isFinite(n) && n >= 0 ? n : 0;
+    }
+
+  async function handleCsvFile(e: React.ChangeEvent<HTMLInputElement>) {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    setImporting(true);
+
+    Papa.parse(file, {
+      header: true,
+      skipEmptyLines: true,
+      transformHeader: (h) => h.trim().toLowerCase(),
+      complete: async (result) => {
+        const rows = (result.data as any[]).filter(Boolean);
+        if (!Array.isArray(rows) || rows.length === 0) {
+          setImporting(false);
+          toast.error("CSV appears empty");
+          return;
+        }
+
+        let ok = 0;
+        let fail = 0;
+        const newOnes: Course[] = [];
+
+        for (const r of rows) {
+          const code = (r.code ?? "").toString().trim();
+          const title = (r.title ?? "").toString().trim();
+          const credits = parseCredits(r.credits);
+          const status = parseStatus(r.status);
+
+          if (!code || !title) {
+            fail++;
+            continue;
+          }
+
+          try {
+            const created = await coursesApi.create({
+              code,
+              title,
+              credits,
+              status,
+            });
+            ok++;
+            newOnes.push(created);
+          } catch (_err) {
+            fail++;
+          }
+        }
+
+        if (ok > 0) setData((d) => [...d, ...newOnes]);
+        setImporting(false);
+
+        if (fail === 0) toast.success(`Imported ${ok} courses`);
+        else if (ok === 0) toast.error(`No rows imported. ${fail} failed.`);
+        else toast.warning(`Imported ${ok} courses, ${fail} failed`);
+      },
+      error: (err) => {
+        setImporting(false);
+        toast.error(`Parse error: ${err?.message || "Unknown error"}`);
+      },
+    });
+
+    // allow picking same file again later
+    e.target.value = "";
+  }
+
   function onExportCsv() {
     const headers = ["Code", "Title", "Credits", "Status"];
     const rows = data.map((c) => [c.code, c.title, c.credits, c.status]);
@@ -124,6 +210,18 @@ export default function Courses() {
       <div className="flex justify-between items-center">
         <h1 className="text-2xl font-semibold">Courses</h1>
         <div className="flex gap-2">
+          {/* Hidden file input for CSV */}
+          <input
+            ref={fileInputRef}
+            type="file"
+            accept=".csv,text/csv"
+            onChange={handleCsvFile}
+            className="hidden"
+          />
+          <Button variant="outline" onClick={triggerImport} disabled={importing}>
+            {importing ? "Importing…" : "Import CSV"}
+          </Button>
+
           <Button variant="outline" onClick={onExportCsv}>
             Export CSV
           </Button>
