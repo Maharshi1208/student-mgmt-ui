@@ -13,6 +13,7 @@ import { useNavigate } from "react-router-dom";
 import { toast } from "sonner";
 import { studentsApi, type Student } from "@/lib/api";
 import Papa from "papaparse";
+import { exportToCsv } from "@/lib/exportCsv";
 
 export default function Students() {
   const navigate = useNavigate();
@@ -130,7 +131,6 @@ export default function Students() {
       skipEmptyLines: true,
       transformHeader: (h) => h.trim().toLowerCase(),
       complete: async (result) => {
-        // rows expected to have: name, email, status?
         const rows = (result.data as any[]).filter(Boolean);
         if (!Array.isArray(rows) || rows.length === 0) {
           setImporting(false);
@@ -142,7 +142,6 @@ export default function Students() {
         let fail = 0;
         const newOnes: Student[] = [];
 
-        // create students sequentially to keep UX simple & avoid flooding server
         for (const r of rows) {
           const name = (r.name ?? "").toString().trim();
           const email = (r.email ?? "").toString().trim();
@@ -162,8 +161,7 @@ export default function Students() {
             });
             ok++;
             newOnes.push(created);
-          } catch (_err) {
-            // could be duplicate/validation error
+          } catch {
             fail++;
           }
         }
@@ -181,8 +179,15 @@ export default function Students() {
       },
     });
 
-    // clear input so same file can be picked again if needed
     e.target.value = "";
+  }
+
+  /* ---------- CSV Export ---------- */
+  function onExportCsv() {
+    const headers = ["Name", "Email", "Status"];
+    const rows = data.map((s) => [s.name, s.email, s.status]);
+    exportToCsv("students", headers, rows, { timestamp: true });
+    toast.info("CSV exported");
   }
 
   return (
@@ -201,6 +206,10 @@ export default function Students() {
           />
           <Button variant="outline" onClick={triggerImport} disabled={importing}>
             {importing ? "Importing…" : "Import CSV"}
+          </Button>
+
+          <Button variant="outline" onClick={onExportCsv}>
+            Export CSV
           </Button>
 
           <Button
